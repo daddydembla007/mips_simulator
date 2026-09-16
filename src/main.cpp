@@ -3,57 +3,68 @@
 #include "CPU.h"
 #include "Instruction.h"
 #include "Decoder.h"
-#include "ALU.h"
 
 int main() {
 
     CPU cpu;
 
-    uint32_t result;
+    /*
+        We will use:
 
-    result = ALU::execute(
-        Operation::ADD,
-        10,
-        5
-    );
+        $t1 (R9) = 100
+        $t0 (R8) = 123456
+    */
 
-    std::cout << "10 + 5 = " << result << "\n";
+    cpu.writeRegister(9, 100);
+    cpu.writeRegister(8, 123456);
 
+    /*
+        SW:
 
-    result = ALU::execute(
-        Operation::SUB,
-        10,
-        5
-    );
+            sw $t0, 4($t1)
 
-    std::cout << "10 - 5 = " << result << "\n";
+        Effective address:
 
+            100 + 4 = 104
 
-    result = ALU::execute(
-        Operation::AND,
-        12,
-        10
-    );
+        So 123456 should be stored at memory address 104.
+    */
 
-    std::cout << "12 & 10 = " << result << "\n";
+    uint32_t swCode = 0xAD280004;
 
+    Instruction swInstruction(swCode);
 
-    result = ALU::execute(
-        Operation::OR,
-        12,
-        10
-    );
+    DecodedInstruction decodedSW =
+        decodeInstruction(swInstruction);
 
-    std::cout << "12 | 10 = " << result << "\n";
+    cpu.execute(decodedSW);
 
+    /*
+        Clear $t0 so that we can prove LW
+        actually retrieves the value from memory.
+    */
+    cpu.writeRegister(8, 0);
 
-    result = ALU::execute(
-        Operation::SLT,
-        5,
-        10
-    );
+    /*
+        LW:
 
-    std::cout << "5 < 10 = " << result << "\n";
+            lw $t0, 4($t1)
+
+        This should load 123456 back into $t0.
+    */
+
+    uint32_t lwCode = 0x8D280004;
+
+    Instruction lwInstruction(lwCode);
+
+    DecodedInstruction decodedLW =
+        decodeInstruction(lwInstruction);
+
+    cpu.execute(decodedLW);
+
+    std::cout << "$t0 = "
+              << cpu.readRegister(8)
+              << "\n";
 
     return 0;
 }
