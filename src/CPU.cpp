@@ -98,6 +98,75 @@ void CPU::writeMemoryWord(uint32_t address, uint32_t value) {
         static_cast<uint8_t>(value & 0xFF);
 }
 
+void CPU::fetchStage() {
+      // --------------------------------------------------------
+    // Instruction Fetch (IF) stage
+    // --------------------------------------------------------
+    //
+    // The PC contains the address of the instruction we want
+    // to fetch.
+    //
+    // Since every MIPS32 instruction is 4 bytes:
+    //
+    //     instruction 0 -> address 0
+    //     instruction 1 -> address 4
+    //     instruction 2 -> address 8
+    //     ...
+    //
+    // Therefore, after fetching an instruction, PC increases
+    // by 4.
+    // --------------------------------------------------------
+
+    // Check whether PC points to a valid instruction.
+    //
+    // PC is a byte address, while instructionMemory is an
+    // array/vector where each element represents one
+    // 32-bit instruction.
+    //
+    // Therefore:
+    //
+    //     instruction index = PC / 4
+    //
+    // Implementation for the Instruction Fetch stage
+    uint32_t instructionIndex = PC / 4;
+
+    if (instructionIndex >= instructionMemory.size()) {
+
+        // There is no instruction at this address.
+        //
+        // For now, mark the pipeline slot as invalid.
+        // This will later allow the pipeline to naturally
+        // become empty after the program finishes.
+        if_id.valid = false;
+
+        return;
+    }
+
+    // --------------------------------------------------------
+    // Fetch the instruction
+    // --------------------------------------------------------
+
+    uint32_t instruction =
+        instructionMemory[instructionIndex];
+
+    // --------------------------------------------------------
+    // Put the fetched instruction into the IF/ID register.
+    // --------------------------------------------------------
+
+    if_id.valid = true;
+
+    // Save the PC belonging to this instruction.
+    if_id.pc = PC;
+
+    // Save the actual 32-bit instruction.
+    if_id.instruction = instruction;
+
+    // --------------------------------------------------------
+    // Move PC to the next instruction.
+    // --------------------------------------------------------
+
+    PC += 4;
+}
 
 void CPU::execute(const DecodedInstruction& instruction) {
 

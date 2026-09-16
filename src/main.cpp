@@ -1,70 +1,38 @@
 #include <iostream>
 
 #include "CPU.h"
-#include "Instruction.h"
-#include "Decoder.h"
 
 int main() {
 
     CPU cpu;
 
-    /*
-        We will use:
+    // Put two dummy instructions into instruction memory.
+    cpu.instructionMemory.push_back(0x012A4020);
+    cpu.instructionMemory.push_back(0x014B4820);
 
-        $t1 (R9) = 100
-        $t0 (R8) = 123456
-    */
+    // PC starts at 0.
+    std::cout << "Initial PC: " << cpu.PC << "\n";
 
-    cpu.writeRegister(9, 100);
-    cpu.writeRegister(8, 123456);
+    // Fetch first instruction
+    cpu.fetchStage();
 
-    /*
-        SW:
+    std::cout << "After first fetch:\n";
+    std::cout << "PC = " << cpu.PC << "\n";
+    std::cout << "IF/ID valid = " << cpu.if_id.valid << "\n";
+    std::cout << "IF/ID PC = " << cpu.if_id.pc << "\n";
+    std::cout << "IF/ID instruction = 0x"
+              << std::hex << cpu.if_id.instruction
+              << std::dec << "\n";
 
-            sw $t0, 4($t1)
+    // Fetch second instruction
+    cpu.fetchStage();
 
-        Effective address:
-
-            100 + 4 = 104
-
-        So 123456 should be stored at memory address 104.
-    */
-
-    uint32_t swCode = 0xAD280004;
-
-    Instruction swInstruction(swCode);
-
-    DecodedInstruction decodedSW =
-        decodeInstruction(swInstruction);
-
-    cpu.execute(decodedSW);
-
-    /*
-        Clear $t0 so that we can prove LW
-        actually retrieves the value from memory.
-    */
-    cpu.writeRegister(8, 0);
-
-    /*
-        LW:
-
-            lw $t0, 4($t1)
-
-        This should load 123456 back into $t0.
-    */
-
-    uint32_t lwCode = 0x8D280004;
-
-    Instruction lwInstruction(lwCode);
-
-    DecodedInstruction decodedLW =
-        decodeInstruction(lwInstruction);
-
-    cpu.execute(decodedLW);
-
-    std::cout << "$t0 = "
-              << cpu.readRegister(8)
-              << "\n";
+    std::cout << "\nAfter second fetch:\n";
+    std::cout << "PC = " << cpu.PC << "\n";
+    std::cout << "IF/ID PC = " << cpu.if_id.pc << "\n";
+    std::cout << "IF/ID instruction = 0x"
+              << std::hex << cpu.if_id.instruction
+              << std::dec << "\n";
 
     return 0;
 }

@@ -3,7 +3,7 @@
 
 #include <cstdint>
 #include <vector>
-
+#include "Pipeline.h"
 #include "Decoder.h"
 
 class CPU {
@@ -19,6 +19,8 @@ public:
 
     // Data memory is byte-addressable
     std::vector<uint8_t> dataMemory;
+    // Pipeline register between IF and ID stages
+    IF_ID if_id;
 
     CPU();
 
@@ -39,6 +41,9 @@ public:
 
     // Execute one decoded instruction
     void execute(const DecodedInstruction& instruction);
+
+    // Execute the Instruction Fetch (IF) stage
+    void fetchStage();
 };
 
 #endif
