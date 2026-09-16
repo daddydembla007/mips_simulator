@@ -3,30 +3,57 @@
 #include "CPU.h"
 #include "Instruction.h"
 #include "Decoder.h"
+#include "ALU.h"
 
 int main() {
 
     CPU cpu;
 
-    uint32_t machineCode = 0x012A4020;
+    uint32_t result;
 
-    Instruction instruction(machineCode);
+    result = ALU::execute(
+        Operation::ADD,
+        10,
+        5
+    );
 
-    DecodedInstruction decoded =
-        decodeInstruction(instruction);
+    std::cout << "10 + 5 = " << result << "\n";
 
-    std::cout << "RS: "
-              << static_cast<int>(decoded.rs) << "\n";
 
-    std::cout << "RT: "
-              << static_cast<int>(decoded.rt) << "\n";
+    result = ALU::execute(
+        Operation::SUB,
+        10,
+        5
+    );
 
-    std::cout << "RD: "
-              << static_cast<int>(decoded.rd) << "\n";
+    std::cout << "10 - 5 = " << result << "\n";
 
-    if (decoded.operation == Operation::ADD) {
-        std::cout << "Operation: ADD\n";
-    }
+
+    result = ALU::execute(
+        Operation::AND,
+        12,
+        10
+    );
+
+    std::cout << "12 & 10 = " << result << "\n";
+
+
+    result = ALU::execute(
+        Operation::OR,
+        12,
+        10
+    );
+
+    std::cout << "12 | 10 = " << result << "\n";
+
+
+    result = ALU::execute(
+        Operation::SLT,
+        5,
+        10
+    );
+
+    std::cout << "5 < 10 = " << result << "\n";
 
     return 0;
 }
