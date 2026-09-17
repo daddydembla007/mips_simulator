@@ -10,7 +10,9 @@ class CPU {
 public:
     // Program Counter: stores the address of the next instruction
     uint32_t PC;
-
+    // True when the instruction currently in EX
+// causes a taken branch.
+bool branchTaken;
     // MIPS has 32 general-purpose registers, each 32 bits wide
     uint32_t registers[32];
     // Number of clock cycles executed so far
@@ -55,7 +57,7 @@ MEM_WB next_mem_wb;
 
     // Reset the processor to its initial state
     void reset();
-
+    
     // Read a value from one of the 32 registers
     uint32_t readRegister(uint8_t index) const;
 

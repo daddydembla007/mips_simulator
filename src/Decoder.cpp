@@ -15,35 +15,42 @@ DecodedInstruction decodeInstruction(const Instruction& instruction) {
 
     decoded.usesImmediate = false;
 
-    // R-type instructions
-    if (instruction.opcode == 0) {
+   // R-type instructions
+if (instruction.opcode == 0) {
 
-        switch (instruction.funct) {
+    switch (instruction.funct) {
 
-            case 32:
-                decoded.operation = Operation::ADD;
-                break;
+        case 0:
+            // 0x00000000 = NOP
+            //
+            // NOP performs no operation.
+            decoded.operation = Operation::NOP;
+            break;
 
-            case 34:
-                decoded.operation = Operation::SUB;
-                break;
+        case 32:
+            decoded.operation = Operation::ADD;
+            break;
 
-            case 36:
-                decoded.operation = Operation::AND;
-                break;
+        case 34:
+            decoded.operation = Operation::SUB;
+            break;
 
-            case 37:
-                decoded.operation = Operation::OR;
-                break;
+        case 36:
+            decoded.operation = Operation::AND;
+            break;
 
-            case 42:
-                decoded.operation = Operation::SLT;
-                break;
+        case 37:
+            decoded.operation = Operation::OR;
+            break;
 
-            default:
-                decoded.operation = Operation::INVALID;
-        }
+        case 42:
+            decoded.operation = Operation::SLT;
+            break;
+
+        default:
+            decoded.operation = Operation::INVALID;
     }
+}
 
     // ADDI
     else if (instruction.opcode == 8) {

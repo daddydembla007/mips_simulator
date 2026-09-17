@@ -14,7 +14,7 @@ void CPU::reset() {
     for (int i = 0; i < 32; i++) {
         registers[i] = 0;
     }
-
+    branchTaken = false;
     // No instructions are loaded initially
     instructionMemory.clear();
 
@@ -157,18 +157,18 @@ void CPU::decodeStage() {
     // Instruction Decode (ID) stage
     // --------------------------------------------------------
     //
-    // ID reads the CURRENT IF/ID register.
+    // CURRENT:
     //
-    // It must NOT modify if_id because IF is simultaneously
-    // producing the next instruction.
+    //     IF/ID → ID
     //
-    // Therefore:
+    // NEXT:
     //
-    //     CURRENT IF/ID → ID → NEXT ID/EX
+    //     ID → next ID/EX
+    //
     // --------------------------------------------------------
 
-    // If IF/ID does not contain a valid instruction,
-    // there is nothing to decode.
+    // If there is no valid instruction in IF/ID,
+    // insert an empty entry into the next pipeline stage.
     if (!if_id.valid) {
 
         next_id_ex.valid = false;
@@ -188,7 +188,7 @@ void CPU::decodeStage() {
 
 
     // --------------------------------------------------------
-    // Step 2: Read the register file
+    // Step 2: Read registers
     // --------------------------------------------------------
 
     uint32_t readData1 =
@@ -199,7 +199,7 @@ void CPU::decodeStage() {
 
 
     // --------------------------------------------------------
-    // Step 3: Sign-extend the immediate
+    // Step 3: Sign-extend immediate
     // --------------------------------------------------------
 
     int32_t immediate =
@@ -207,28 +207,76 @@ void CPU::decodeStage() {
 
 
     // --------------------------------------------------------
-    // Step 4: Write everything into NEXT ID/EX
+    // Step 4: Fill NEXT ID/EX
     // --------------------------------------------------------
 
     next_id_ex.valid = true;
 
-    // PC belonging to this instruction.
-    next_id_ex.pc = if_id.pc;
+    next_id_ex.pc =
+        if_id.pc;
 
-    // Values read from the register file.
-    next_id_ex.readData1 = readData1;
-    next_id_ex.readData2 = readData2;
+    next_id_ex.readData1 =
+        readData1;
 
-    // Sign-extended immediate.
-    next_id_ex.immediate = immediate;
+    next_id_ex.readData2 =
+        readData2;
 
-    // Register numbers.
-    next_id_ex.rs = decoded.rs;
-    next_id_ex.rt = decoded.rt;
-    next_id_ex.rd = decoded.rd;
+    next_id_ex.immediate =
+        immediate;
 
-    // Decoded operation.
-    next_id_ex.operation = decoded.operation;
+    next_id_ex.rs =
+        decoded.rs;
+
+    next_id_ex.rt =
+        decoded.rt;
+
+    next_id_ex.rd =
+        decoded.rd;
+
+    next_id_ex.operation =
+        decoded.operation;
+
+
+    // --------------------------------------------------------
+    // Step 5: Determine whether this is a branch
+    // --------------------------------------------------------
+
+    next_id_ex.isBranch = false;
+
+    next_id_ex.branchNotEqual = false;
+
+    next_id_ex.branchTarget = 0;
+
+
+    if (decoded.operation == Operation::BEQ ||
+        decoded.operation == Operation::BNE) {
+
+        // This instruction is a branch.
+        next_id_ex.isBranch = true;
+
+        // BNE requires the "not equal" condition.
+        if (decoded.operation == Operation::BNE) {
+
+            next_id_ex.branchNotEqual = true;
+        }
+
+
+        // ----------------------------------------------------
+        // Calculate branch target.
+        //
+        //     target =
+        //         PC + 4 + (immediate << 2)
+        //
+        // The immediate represents the number of
+        // instructions to move, not the number of bytes.
+        // Therefore we multiply it by 4.
+        // ----------------------------------------------------
+
+        next_id_ex.branchTarget =
+            if_id.pc
+            + 4
+            + (static_cast<int32_t>(immediate << 2));
+    }
 }
 
 void CPU::executeStage() {
@@ -239,18 +287,37 @@ void CPU::executeStage() {
     //
     // CURRENT:
     //
-    //     ID/EX → EX
-    //
+    //     ID/EX
+    //       |
+    //       v
+    //      EX
+    //       |
+    //       v
     // NEXT:
     //
-    //     EX → next EX/MEM
+    //     next EX/MEM
     //
-    // EX calculates the ALU result and determines which
-    // register will eventually receive the result.
+    // The EX stage:
+    //
+    // 1. Handles branches
+    // 2. Selects ALU operands
+    // 3. Performs forwarding when necessary
+    // 4. Executes the ALU operation
+    // 5. Passes the result to next EX/MEM
     // --------------------------------------------------------
 
-    // If there is no valid instruction in ID/EX,
-    // EX has nothing to execute.
+
+    // --------------------------------------------------------
+    // By default, assume no branch is taken this cycle.
+    // --------------------------------------------------------
+
+    branchTaken = false;
+
+
+    // --------------------------------------------------------
+    // If ID/EX is empty, there is nothing to execute.
+    // --------------------------------------------------------
+
     if (!id_ex.valid) {
 
         next_ex_mem.valid = false;
@@ -259,147 +326,334 @@ void CPU::executeStage() {
     }
 
 
-   // --------------------------------------------------------
-// Forwarding for operand 1
-// --------------------------------------------------------
-//
-// Normally, operand1 comes from the value captured during ID.
-//
-// But if a previous instruction has just produced a result
-// for the same register, that result may not have reached
-// the register file yet.
-//
-// In that case, forward the newer value directly.
-// --------------------------------------------------------
+    // ========================================================
+    // NOP
+    // ========================================================
+    //
+    // NOP occupies a pipeline slot but performs no operation.
+    //
+    // Therefore, it simply becomes a bubble after EX.
+    // ========================================================
 
-uint32_t operand1 =
-    id_ex.readData1;
+    if (id_ex.operation == Operation::NOP) {
 
+        next_ex_mem.valid = false;
 
-// Check EX/MEM first because it contains the most recently
-// produced ALU result.
-if (ex_mem.valid &&
-    ex_mem.destination != 0 &&
-    ex_mem.destination == id_ex.rs &&
-    ex_mem.operation != Operation::SW &&
-    ex_mem.operation != Operation::LW) {
-
-    operand1 =
-        ex_mem.aluResult;
-}
-
-
-// If EX/MEM didn't provide the value, check MEM/WB.
-else if (mem_wb.valid &&
-         mem_wb.destination != 0 &&
-         mem_wb.destination == id_ex.rs) {
-
-    // LW gets its value from memory.
-    if (mem_wb.operation == Operation::LW) {
-
-        operand1 =
-            mem_wb.memoryData;
+        return;
     }
 
-    // Arithmetic instructions get their value from ALU.
-    else {
 
-        operand1 =
-            mem_wb.aluResult;
+    // ========================================================
+    // Branch instructions
+    // ========================================================
+    //
+    // BEQ:
+    //
+    //     branch if rs == rt
+    //
+    // BNE:
+    //
+    //     branch if rs != rt
+    //
+    // Branches don't need the normal ALU → MEM → WB path.
+    // ========================================================
+
+    if (id_ex.operation == Operation::BEQ ||
+        id_ex.operation == Operation::BNE) {
+
+
+        // ----------------------------------------------------
+        // Values to compare
+        // ----------------------------------------------------
+
+        uint32_t value1 =
+            id_ex.readData1;
+
+        uint32_t value2 =
+            id_ex.readData2;
+
+
+        // ----------------------------------------------------
+        // Forward branch operands if necessary.
+        //
+        // This is important if a branch depends on a recently
+        // produced arithmetic result.
+        // ----------------------------------------------------
+
+        // Forward first operand from EX/MEM.
+        if (ex_mem.valid &&
+            ex_mem.destination != 0 &&
+            ex_mem.destination == id_ex.rs &&
+            ex_mem.operation != Operation::SW &&
+            ex_mem.operation != Operation::LW) {
+
+            value1 =
+                ex_mem.aluResult;
+        }
+
+        // Otherwise forward from MEM/WB.
+        else if (mem_wb.valid &&
+                 mem_wb.destination != 0 &&
+                 mem_wb.destination == id_ex.rs) {
+
+            if (mem_wb.operation == Operation::LW) {
+
+                value1 =
+                    mem_wb.memoryData;
+
+            } else {
+
+                value1 =
+                    mem_wb.aluResult;
+            }
+        }
+
+
+        // Forward second operand from EX/MEM.
+        if (ex_mem.valid &&
+            ex_mem.destination != 0 &&
+            ex_mem.destination == id_ex.rt &&
+            ex_mem.operation != Operation::SW &&
+            ex_mem.operation != Operation::LW) {
+
+            value2 =
+                ex_mem.aluResult;
+        }
+
+        // Otherwise forward from MEM/WB.
+        else if (mem_wb.valid &&
+                 mem_wb.destination != 0 &&
+                 mem_wb.destination == id_ex.rt) {
+
+            if (mem_wb.operation == Operation::LW) {
+
+                value2 =
+                    mem_wb.memoryData;
+
+            } else {
+
+                value2 =
+                    mem_wb.aluResult;
+            }
+        }
+
+
+        // ----------------------------------------------------
+        // Determine whether branch is taken.
+        // ----------------------------------------------------
+
+        bool taken;
+
+        if (id_ex.operation == Operation::BEQ) {
+
+            // BEQ → branch if equal
+            taken =
+                (value1 == value2);
+
+        } else {
+
+            // BNE → branch if not equal
+            taken =
+                (value1 != value2);
+        }
+
+
+        // ----------------------------------------------------
+        // Redirect PC if branch is taken.
+        // ----------------------------------------------------
+
+        if (taken) {
+
+            branchTaken = true;
+
+            PC =
+                id_ex.branchTarget;
+        }
+
+
+        // ----------------------------------------------------
+        // Branch does not continue to MEM/WB.
+        // ----------------------------------------------------
+
+        next_ex_mem.valid = false;
+
+        return;
     }
-}
 
 
-   uint32_t operand2;
+    // ========================================================
+    // Normal ALU instructions
+    // ========================================================
 
 
-// --------------------------------------------------------
-// Immediate instructions
-// --------------------------------------------------------
-//
-// ADDI, LW and SW use the immediate as their second ALU
-// operand, so there is no register value to forward here.
-// --------------------------------------------------------
+    // --------------------------------------------------------
+    // Operand 1
+    // --------------------------------------------------------
+    //
+    // Normally:
+    //
+    //     operand1 = value of rs
+    //
+    // But if a previous instruction has already calculated
+    // a newer value for rs, use forwarding.
+    // --------------------------------------------------------
 
-if (id_ex.operation == Operation::ADDI ||
-    id_ex.operation == Operation::LW ||
-    id_ex.operation == Operation::SW) {
-
-    operand2 =
-        static_cast<uint32_t>(id_ex.immediate);
-}
-
-
-// --------------------------------------------------------
-// R-type instructions
-// --------------------------------------------------------
-//
-// The second operand normally comes from rt.
-//
-// However, it may need forwarding just like operand1.
-// --------------------------------------------------------
-
-else {
-
-    operand2 =
-        id_ex.readData2;
+    uint32_t operand1 =
+        id_ex.readData1;
 
 
-    // Check the most recent ALU result first.
+    // --------------------------------------------------------
+    // Forward operand 1 from EX/MEM.
+    // --------------------------------------------------------
+
     if (ex_mem.valid &&
         ex_mem.destination != 0 &&
-        ex_mem.destination == id_ex.rt &&
+        ex_mem.destination == id_ex.rs &&
         ex_mem.operation != Operation::SW &&
         ex_mem.operation != Operation::LW) {
 
-        operand2 =
+        operand1 =
             ex_mem.aluResult;
     }
 
 
-    // Otherwise check MEM/WB.
+    // --------------------------------------------------------
+    // If EX/MEM doesn't have the value, check MEM/WB.
+    // --------------------------------------------------------
+
     else if (mem_wb.valid &&
              mem_wb.destination != 0 &&
-             mem_wb.destination == id_ex.rt) {
+             mem_wb.destination == id_ex.rs) {
 
         if (mem_wb.operation == Operation::LW) {
 
-            operand2 =
+            operand1 =
                 mem_wb.memoryData;
-        }
 
-        else {
+        } else {
 
-            operand2 =
+            operand1 =
                 mem_wb.aluResult;
         }
     }
-}
+
 
     // --------------------------------------------------------
-    // Determine the actual ALU operation.
+    // Operand 2
+    // --------------------------------------------------------
+
+    uint32_t operand2;
+
+
+    // --------------------------------------------------------
+    // Immediate instructions
     // --------------------------------------------------------
     //
-    // LW and SW need the ALU to calculate:
+    // ADDI:
+    //
+    //     rs + immediate
+    //
+    // LW/SW:
+    //
+    //     base + offset
+    // --------------------------------------------------------
+
+    if (id_ex.operation == Operation::ADDI ||
+        id_ex.operation == Operation::LW ||
+        id_ex.operation == Operation::SW) {
+
+        operand2 =
+            static_cast<uint32_t>(
+                id_ex.immediate
+            );
+    }
+
+
+    // --------------------------------------------------------
+    // R-type instructions
+    // --------------------------------------------------------
+    //
+    // For R-type instructions:
+    //
+    //     operand2 = value of rt
+    //
+    // This value may also need forwarding.
+    // --------------------------------------------------------
+
+    else {
+
+        operand2 =
+            id_ex.readData2;
+
+
+        // ----------------------------------------------------
+        // Forward operand 2 from EX/MEM.
+        // ----------------------------------------------------
+
+        if (ex_mem.valid &&
+            ex_mem.destination != 0 &&
+            ex_mem.destination == id_ex.rt &&
+            ex_mem.operation != Operation::SW &&
+            ex_mem.operation != Operation::LW) {
+
+            operand2 =
+                ex_mem.aluResult;
+        }
+
+
+        // ----------------------------------------------------
+        // Otherwise forward from MEM/WB.
+        // ----------------------------------------------------
+
+        else if (mem_wb.valid &&
+                 mem_wb.destination != 0 &&
+                 mem_wb.destination == id_ex.rt) {
+
+            if (mem_wb.operation == Operation::LW) {
+
+                operand2 =
+                    mem_wb.memoryData;
+
+            } else {
+
+                operand2 =
+                    mem_wb.aluResult;
+            }
+        }
+    }
+
+
+    // ========================================================
+    // Determine actual ALU operation
+    // ========================================================
+    //
+    // LW and SW aren't themselves ALU operations.
+    //
+    // Their EX-stage operation is:
     //
     //     base address + offset
     //
-    // Therefore, the ALU performs ADD for them.
-    // --------------------------------------------------------
+    // Therefore:
+    //
+    //     LW → ALU ADD
+    //     SW → ALU ADD
+    // ========================================================
 
     Operation aluOperation =
         id_ex.operation;
 
+
     if (id_ex.operation == Operation::LW ||
         id_ex.operation == Operation::SW) {
 
-        aluOperation = Operation::ADD;
+        aluOperation =
+            Operation::ADD;
     }
 
 
-    // --------------------------------------------------------
-    // Perform ALU operation
-    // --------------------------------------------------------
+    // ========================================================
+    // Execute ALU
+    // ========================================================
 
     uint32_t result =
         ALU::execute(
@@ -409,19 +663,18 @@ else {
         );
 
 
-    // --------------------------------------------------------
-    // Write results into NEXT EX/MEM
-    // --------------------------------------------------------
+    // ========================================================
+    // Write result into NEXT EX/MEM
+    // ========================================================
 
     next_ex_mem.valid = true;
 
-    // ALU result.
+
+    // ALU result:
     //
-    // For arithmetic:
-    //     actual arithmetic result
+    // Arithmetic instruction → actual result
     //
-    // For LW/SW:
-    //     calculated memory address
+    // LW/SW → calculated memory address
     next_ex_mem.aluResult =
         result;
 
@@ -430,9 +683,7 @@ else {
     // Store data
     // --------------------------------------------------------
     //
-    // Needed by SW.
-    //
-    // Example:
+    // Needed for SW.
     //
     //     sw $t0, 4($t1)
     //
@@ -455,8 +706,7 @@ else {
     //
     //     destination = rt
     //
-    // SW doesn't actually write a register, but keeping a
-    // value here is harmless because WB will ignore SW.
+    // SW doesn't write a register.
     // --------------------------------------------------------
 
     if (id_ex.operation == Operation::ADDI ||
@@ -472,7 +722,10 @@ else {
     }
 
 
-    // Pass the instruction type to the next stage.
+    // --------------------------------------------------------
+    // Pass operation to the next pipeline stage.
+    // --------------------------------------------------------
+
     next_ex_mem.operation =
         id_ex.operation;
 }
@@ -877,13 +1130,14 @@ void CPU::step() {
 
     cycle++;
 
-    // --------------------------------------------------------
-    // First, execute stages that are already further down
-    // the pipeline.
+
+    // ========================================================
+    // Execute stages from WB → IF
+    // ========================================================
     //
-    // These stages read the CURRENT pipeline registers and
-    // write to NEXT pipeline registers.
-    // --------------------------------------------------------
+    // Every stage reads CURRENT pipeline registers and writes
+    // into NEXT pipeline registers.
+    // ========================================================
 
     writeBackStage();
 
@@ -892,71 +1146,99 @@ void CPU::step() {
     executeStage();
 
 
-    // --------------------------------------------------------
-    // Check whether the instruction currently in IF/ID depends
-    // on a value being loaded by the instruction currently in
-    // ID/EX.
-    // --------------------------------------------------------
+    // ========================================================
+    // Control hazard
+    // ========================================================
+    //
+    // executeStage() may have discovered that a branch is
+    // taken.
+    //
+    // If so:
+    //
+    //     1. PC has already been redirected to branchTarget.
+    //     2. The instruction in IF/ID is wrong-path.
+    //     3. The instruction currently entering ID/EX is
+    //        also wrong-path.
+    //
+    // Therefore, flush both pipeline registers.
+    // ========================================================
 
-    bool loadUseHazard =
-        hasLoadUseHazard();
+    if (branchTaken) {
+
+        // ----------------------------------------------------
+        // Kill the instruction currently waiting in IF/ID.
+        // ----------------------------------------------------
+
+        next_if_id.valid = false;
 
 
-    if (loadUseHazard) {
-
-        // ====================================================
-        // STALL
-        // ====================================================
-        //
-        // The instruction in ID cannot move into EX yet.
-        //
-        // Therefore:
-        //
-        //     ID/EX gets a bubble.
-        //
-        // However, the LW already in ID/EX must continue
-        // through EX → MEM → WB.
-        //
-        // We already called executeStage() above, so its
-        // result has safely gone into next_EX_MEM.
-        // ====================================================
+        // ----------------------------------------------------
+        // Kill the instruction that would have entered ID/EX.
+        // ----------------------------------------------------
 
         next_id_ex.valid = false;
-        next_if_id = if_id;
 
 
         // ----------------------------------------------------
-        // STALL IF
-        // ----------------------------------------------------
+        // IMPORTANT:
         //
+        // Do NOT call decodeStage().
         // Do NOT call fetchStage().
         //
-        // Therefore:
-        //
-        //     PC stays unchanged
-        //     IF/ID stays unchanged
-        //
-        // The dependent instruction remains in IF/ID.
+        // The branch has already redirected PC.
+        // The correct-path instruction will be fetched during
+        // the next cycle.
         // ----------------------------------------------------
-
     }
 
     else {
 
-        // ----------------------------------------------------
-        // No hazard.
+        // ====================================================
+        // No branch taken.
         //
         // Normal ID and IF operation.
-        // ----------------------------------------------------
+        // ====================================================
 
-        decodeStage();
+        // Check for load-use hazard.
+        bool loadUseHazard =
+            hasLoadUseHazard();
 
-        fetchStage();
+
+        if (loadUseHazard) {
+
+            // ------------------------------------------------
+            // Insert a bubble into ID/EX.
+            // ------------------------------------------------
+
+            next_id_ex.valid = false;
+
+
+            // ------------------------------------------------
+            // Keep the dependent instruction in IF/ID.
+            // ------------------------------------------------
+
+            next_if_id = if_id;
+
+
+            // ------------------------------------------------
+            // Do not fetch a new instruction.
+            //
+            // PC therefore remains unchanged.
+            // ------------------------------------------------
+        }
+
+        else {
+
+            // Normal operation.
+            decodeStage();
+
+            fetchStage();
+        }
     }
 
 
     // ========================================================
-    // Simulated clock edge
+    // Clock edge
     // ========================================================
     //
     // All pipeline registers update simultaneously.

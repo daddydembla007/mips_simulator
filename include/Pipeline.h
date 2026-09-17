@@ -35,9 +35,22 @@ struct IF_ID {
 // EX (Execute) stage can use it during the next clock cycle.
 //
 struct ID_EX {
+    // --------------------------------------------------------
+// Branch information
+// --------------------------------------------------------
+
+// True if this instruction is a BEQ or BNE.
+bool isBranch = false;
+
+// True specifically for BNE.
+// false means BEQ when isBranch is true.
+bool branchNotEqual = false;
+
+// Address to jump to if the branch is taken.
+uint32_t branchTarget = 0;
 
     bool valid = false;
-
+    
     // PC of the instruction.
     uint32_t pc = 0;
 

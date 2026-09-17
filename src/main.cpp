@@ -10,51 +10,105 @@ int main() {
     // Program
     // ========================================================
     //
-    // I1: LW  $t0, 0($t1)
-    // I2: ADD $t3, $t0, $t2
+    // Address 0:
+    //     BEQ $t0, $t1, 2
     //
-    // I2 immediately needs the value loaded by I1.
-    // Therefore, this creates a load-use hazard.
+    // Address 4:
+    //     ADDI $t2, $zero, 999   <-- WRONG PATH
+    //
+    // Address 8:
+    //     ADDI $t2, $zero, 888   <-- WRONG PATH
+    //
+    // Address 12:
+    //     ADDI $t3, $zero, 42    <-- BRANCH TARGET
+    //
+    // Since $t0 == $t1, the BEQ is taken.
+    //
+    // Therefore:
+    //
+    //     $t2 must remain 0
+    //     $t3 must become 42
     // ========================================================
 
-    // LW $t0, 0($t1)
-    uint32_t lwInstruction =
-        (35u << 26) |
-        (9u << 21) |
-        (8u << 16) |
-        0u;
 
-    // ADD $t3, $t0, $t2
-    uint32_t addInstruction =
-        (0u << 26) |
+    // --------------------------------------------------------
+    // BEQ $t0, $t1, 2
+    //
+    // opcode = 4
+    // rs     = 8  ($t0)
+    // rt     = 9  ($t1)
+    // immediate = 2
+    // --------------------------------------------------------
+
+    uint32_t beq =
+        (4u << 26) |
         (8u << 21) |
+        (9u << 16) |
+        2u;
+
+
+    // --------------------------------------------------------
+    // ADDI $t2, $zero, 999
+    //
+    // opcode = 8
+    // rs     = 0  ($zero)
+    // rt     = 10 ($t2)
+    // --------------------------------------------------------
+
+    uint32_t wrongInstruction1 =
+        (8u << 26) |
+        (0u << 21) |
         (10u << 16) |
-        (11u << 11) |
-        32u;
-
-    cpu.instructionMemory.push_back(lwInstruction);
-    cpu.instructionMemory.push_back(addInstruction);
+        999u;
 
 
     // --------------------------------------------------------
-    // Initial register values
+    // ADDI $t2, $zero, 888
     // --------------------------------------------------------
 
-    // $t1 = base address
-    cpu.writeRegister(9, 100);
+    uint32_t wrongInstruction2 =
+        (8u << 26) |
+        (0u << 21) |
+        (10u << 16) |
+        888u;
 
-    // $t2 = 5
-    cpu.writeRegister(10, 5);
 
-    // Store 30 at memory address 100.
-    cpu.writeMemoryWord(100, 30);
+    // --------------------------------------------------------
+    // ADDI $t3, $zero, 42
+    //
+    // This is the correct branch target at address 12.
+    // --------------------------------------------------------
+
+    uint32_t targetInstruction =
+        (8u << 26) |
+        (0u << 21) |
+        (11u << 16) |
+        42u;
+
+
+    // --------------------------------------------------------
+    // Load instructions into instruction memory.
+    // --------------------------------------------------------
+
+    cpu.instructionMemory.push_back(beq);
+    cpu.instructionMemory.push_back(wrongInstruction1);
+    cpu.instructionMemory.push_back(wrongInstruction2);
+    cpu.instructionMemory.push_back(targetInstruction);
+
+
+    // --------------------------------------------------------
+    // Make BEQ condition true.
+    // --------------------------------------------------------
+
+    cpu.writeRegister(8, 10);   // $t0 = 10
+    cpu.writeRegister(9, 10);   // $t1 = 10
 
 
     // ========================================================
-    // Run the pipeline
+    // Run pipeline
     // ========================================================
 
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < 8; i++) {
 
         cpu.step();
 
@@ -62,6 +116,14 @@ int main() {
         std::cout << "Cycle " << cpu.cycle << "\n";
         std::cout << "========================================\n";
 
+        std::cout << "PC = "
+                  << cpu.PC
+                  << "\n";
+
+
+        // ----------------------------------------------------
+        // IF/ID
+        // ----------------------------------------------------
 
         std::cout << "IF/ID : ";
 
@@ -74,11 +136,11 @@ int main() {
             DecodedInstruction decoded =
                 decodeInstruction(instruction);
 
-            if (decoded.operation == Operation::LW)
-                std::cout << "LW";
+            if (decoded.operation == Operation::BEQ)
+                std::cout << "BEQ";
 
-            else if (decoded.operation == Operation::ADD)
-                std::cout << "ADD";
+            else if (decoded.operation == Operation::ADDI)
+                std::cout << "ADDI";
 
             else
                 std::cout << "OTHER";
@@ -89,15 +151,19 @@ int main() {
         }
 
 
+        // ----------------------------------------------------
+        // ID/EX
+        // ----------------------------------------------------
+
         std::cout << "\nID/EX : ";
 
         if (cpu.id_ex.valid) {
 
-            if (cpu.id_ex.operation == Operation::LW)
-                std::cout << "LW";
+            if (cpu.id_ex.operation == Operation::BEQ)
+                std::cout << "BEQ";
 
-            else if (cpu.id_ex.operation == Operation::ADD)
-                std::cout << "ADD";
+            else if (cpu.id_ex.operation == Operation::ADDI)
+                std::cout << "ADDI";
 
             else
                 std::cout << "OTHER";
@@ -108,15 +174,16 @@ int main() {
         }
 
 
+        // ----------------------------------------------------
+        // EX/MEM
+        // ----------------------------------------------------
+
         std::cout << "\nEX/MEM: ";
 
         if (cpu.ex_mem.valid) {
 
-            if (cpu.ex_mem.operation == Operation::LW)
-                std::cout << "LW";
-
-            else if (cpu.ex_mem.operation == Operation::ADD)
-                std::cout << "ADD";
+            if (cpu.ex_mem.operation == Operation::ADDI)
+                std::cout << "ADDI";
 
             else
                 std::cout << "OTHER";
@@ -126,16 +193,17 @@ int main() {
             std::cout << "-";
         }
 
+
+        // ----------------------------------------------------
+        // MEM/WB
+        // ----------------------------------------------------
 
         std::cout << "\nMEM/WB: ";
 
         if (cpu.mem_wb.valid) {
 
-            if (cpu.mem_wb.operation == Operation::LW)
-                std::cout << "LW";
-
-            else if (cpu.mem_wb.operation == Operation::ADD)
-                std::cout << "ADD";
+            if (cpu.mem_wb.operation == Operation::ADDI)
+                std::cout << "ADDI";
 
             else
                 std::cout << "OTHER";
@@ -146,9 +214,12 @@ int main() {
         }
 
 
-        // Show the important registers.
-        std::cout << "\n$t0 = "
-                  << cpu.readRegister(8);
+        // ----------------------------------------------------
+        // Important registers
+        // ----------------------------------------------------
+
+        std::cout << "\n$t2 = "
+                  << cpu.readRegister(10);
 
         std::cout << "\n$t3 = "
                   << cpu.readRegister(11);
@@ -158,13 +229,13 @@ int main() {
 
 
     // ========================================================
-    // Final result
+    // Final results
     // ========================================================
 
     std::cout << "\nFinal:\n";
 
-    std::cout << "$t0 = "
-              << cpu.readRegister(8)
+    std::cout << "$t2 = "
+              << cpu.readRegister(10)
               << "\n";
 
     std::cout << "$t3 = "
