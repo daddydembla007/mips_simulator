@@ -5,7 +5,7 @@
 #include <vector>
 #include "Pipeline.h"
 #include "Decoder.h"
-
+#include <string>
 class CPU {
 public:
     // Program Counter: stores the address of the next instruction
@@ -53,11 +53,31 @@ IF_ID next_if_id;
 ID_EX next_id_ex;
 EX_MEM next_ex_mem;
 MEM_WB next_mem_wb;
+
+// ============================================================
+// Processor statistics
+// ============================================================
+
+// Total number of instructions that completed execution.
+uint64_t instructionsRetired = 0;
+
+// Number of cycles in which a load-use stall was inserted.
+uint64_t stallCount = 0;
+
+// Number of taken branches/jumps that caused a pipeline flush.
+uint64_t flushCount = 0;
+
+// Number of wrong-path instructions removed because of flushes.
+uint64_t flushedInstructionCount = 0;
+
+// Description of what happened during the current cycle.
+// Used by the simulator visualization.
+std::string lastEvent;
     CPU();
 
     // Reset the processor to its initial state
     void reset();
-    
+
     // Read a value from one of the 32 registers
     uint32_t readRegister(uint8_t index) const;
 

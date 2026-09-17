@@ -35,6 +35,11 @@ struct IF_ID {
 // EX (Execute) stage can use it during the next clock cycle.
 //
 struct ID_EX {
+    // True if this instruction is a J instruction.
+bool isJump = false;
+
+// Target address calculated for the jump.
+uint32_t jumpTarget = 0;
     // --------------------------------------------------------
 // Branch information
 // --------------------------------------------------------
