@@ -19,9 +19,16 @@ public:
 
     // Data memory is byte-addressable
     std::vector<uint8_t> dataMemory;
-    // Pipeline register between IF and ID stages
-    IF_ID if_id;
+  // Pipeline register between IF and ID stages
+IF_ID if_id;
 
+// Pipeline register between ID and EX stages
+ID_EX id_ex;
+
+// Pipeline register between EX and MEM stages
+EX_MEM ex_mem;
+// Pipeline register between MEM and WB stages
+MEM_WB mem_wb;
     CPU();
 
     // Reset the processor to its initial state
@@ -42,8 +49,11 @@ public:
     // Execute one decoded instruction
     void execute(const DecodedInstruction& instruction);
 
-    // Execute the Instruction Fetch (IF) stage
     void fetchStage();
+    void decodeStage();
+    void executeStage();
+    void memoryStage();
+    void writeBackStage();
 };
 
 #endif

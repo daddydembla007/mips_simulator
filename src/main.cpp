@@ -6,33 +6,89 @@ int main() {
 
     CPU cpu;
 
-    // Put two dummy instructions into instruction memory.
+    // --------------------------------------------------------
+    // Program:
+    //
+    //     ADD $t0, $t1, $t2
+    //
+    // $t0 = R8
+    // $t1 = R9
+    // $t2 = R10
+    //
+    // Expected:
+    //
+    //     $t0 = 10 + 20 = 30
+    // --------------------------------------------------------
+
     cpu.instructionMemory.push_back(0x012A4020);
-    cpu.instructionMemory.push_back(0x014B4820);
 
-    // PC starts at 0.
-    std::cout << "Initial PC: " << cpu.PC << "\n";
+    // Initialize source registers.
+    cpu.writeRegister(9, 10);
+    cpu.writeRegister(10, 20);
 
-    // Fetch first instruction
+
+    // ========================================================
+    // Cycle 1: IF
+    // ========================================================
+
     cpu.fetchStage();
 
-    std::cout << "After first fetch:\n";
-    std::cout << "PC = " << cpu.PC << "\n";
-    std::cout << "IF/ID valid = " << cpu.if_id.valid << "\n";
-    std::cout << "IF/ID PC = " << cpu.if_id.pc << "\n";
-    std::cout << "IF/ID instruction = 0x"
-              << std::hex << cpu.if_id.instruction
-              << std::dec << "\n";
 
-    // Fetch second instruction
-    cpu.fetchStage();
+    // ========================================================
+    // Cycle 2: ID
+    // ========================================================
 
-    std::cout << "\nAfter second fetch:\n";
-    std::cout << "PC = " << cpu.PC << "\n";
-    std::cout << "IF/ID PC = " << cpu.if_id.pc << "\n";
-    std::cout << "IF/ID instruction = 0x"
-              << std::hex << cpu.if_id.instruction
-              << std::dec << "\n";
+    cpu.decodeStage();
+
+
+    // ========================================================
+    // Cycle 3: EX
+    // ========================================================
+
+    cpu.executeStage();
+
+
+    // ========================================================
+    // Cycle 4: MEM
+    // ========================================================
+
+    cpu.memoryStage();
+
+
+    // ========================================================
+    // Cycle 5: WB
+    // ========================================================
+
+    cpu.writeBackStage();
+
+
+    // --------------------------------------------------------
+    // Check final result
+    // --------------------------------------------------------
+
+    std::cout << "Final register values:\n";
+
+    std::cout << "$t1 = "
+              << cpu.readRegister(9)
+              << "\n";
+
+    std::cout << "$t2 = "
+              << cpu.readRegister(10)
+              << "\n";
+
+    std::cout << "$t0 = "
+              << cpu.readRegister(8)
+              << "\n";
+
+
+    if (cpu.readRegister(8) == 30) {
+
+        std::cout << "\nSUCCESS: ADD completed correctly!\n";
+
+    } else {
+
+        std::cout << "\nERROR: ADD result is incorrect.\n";
+    }
 
     return 0;
 }
