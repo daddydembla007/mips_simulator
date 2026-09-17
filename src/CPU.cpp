@@ -9,7 +9,7 @@ void CPU::reset() {
 
     // Program execution starts at address 0
     PC = 0;
-
+    cycle = 0;
     // Initially, all 32 registers contain 0
     for (int i = 0; i < 32; i++) {
         registers[i] = 0;
@@ -23,7 +23,6 @@ void CPU::reset() {
     dataMemory.resize(1024, 0);
 }
 
-
 uint32_t CPU::readRegister(uint8_t index) const {
 
     // MIPS has registers numbered from 0 to 31
@@ -33,7 +32,6 @@ uint32_t CPU::readRegister(uint8_t index) const {
 
     return registers[index];
 }
-
 
 void CPU::writeRegister(uint8_t index, uint32_t value) {
 
@@ -47,7 +45,6 @@ void CPU::writeRegister(uint8_t index, uint32_t value) {
         registers[index] = value;
     }
 }
-
 
 uint32_t CPU::readMemoryWord(uint32_t address) const {
 
@@ -76,7 +73,6 @@ uint32_t CPU::readMemoryWord(uint32_t address) const {
     return value;
 }
 
-
 void CPU::writeMemoryWord(uint32_t address, uint32_t value) {
 
     // A 32-bit word requires 4 bytes of memory
@@ -99,67 +95,54 @@ void CPU::writeMemoryWord(uint32_t address, uint32_t value) {
 }
 
 void CPU::fetchStage() {
-      // --------------------------------------------------------
+
+    // --------------------------------------------------------
     // Instruction Fetch (IF) stage
     // --------------------------------------------------------
     //
-    // The PC contains the address of the instruction we want
-    // to fetch.
+    // Fetch the instruction pointed to by PC.
     //
-    // Since every MIPS32 instruction is 4 bytes:
+    // IMPORTANT:
+    // We write into NEXT IF/ID, not the current IF/ID.
     //
-    //     instruction 0 -> address 0
-    //     instruction 1 -> address 4
-    //     instruction 2 -> address 8
-    //     ...
-    //
-    // Therefore, after fetching an instruction, PC increases
-    // by 4.
+    // The current IF/ID belongs to the instruction that is
+    // already being processed by the ID stage this cycle.
     // --------------------------------------------------------
 
-    // Check whether PC points to a valid instruction.
-    //
-    // PC is a byte address, while instructionMemory is an
-    // array/vector where each element represents one
-    // 32-bit instruction.
-    //
-    // Therefore:
-    //
-    //     instruction index = PC / 4
-    //
-    // Implementation for the Instruction Fetch stage
     uint32_t instructionIndex = PC / 4;
+
+    // --------------------------------------------------------
+    // Check whether PC points to a valid instruction.
+    // --------------------------------------------------------
 
     if (instructionIndex >= instructionMemory.size()) {
 
-        // There is no instruction at this address.
+        // No instruction to fetch.
         //
-        // For now, mark the pipeline slot as invalid.
-        // This will later allow the pipeline to naturally
-        // become empty after the program finishes.
-        if_id.valid = false;
+        // The next IF/ID register will therefore be empty.
+        next_if_id.valid = false;
 
         return;
     }
 
     // --------------------------------------------------------
-    // Fetch the instruction
+    // Fetch instruction from instruction memory.
     // --------------------------------------------------------
 
     uint32_t instruction =
         instructionMemory[instructionIndex];
 
     // --------------------------------------------------------
-    // Put the fetched instruction into the IF/ID register.
+    // Write fetched instruction into NEXT IF/ID.
     // --------------------------------------------------------
 
-    if_id.valid = true;
+    next_if_id.valid = true;
 
-    // Save the PC belonging to this instruction.
-    if_id.pc = PC;
+    // PC associated with this instruction.
+    next_if_id.pc = PC;
 
-    // Save the actual 32-bit instruction.
-    if_id.instruction = instruction;
+    // Actual 32-bit instruction.
+    next_if_id.instruction = instruction;
 
     // --------------------------------------------------------
     // Move PC to the next instruction.
@@ -174,43 +157,35 @@ void CPU::decodeStage() {
     // Instruction Decode (ID) stage
     // --------------------------------------------------------
     //
-    // The instruction was fetched during the previous cycle
-    // and is currently sitting inside the IF/ID pipeline
-    // register.
+    // ID reads the CURRENT IF/ID register.
     //
-    // The ID stage does three main things:
+    // It must NOT modify if_id because IF is simultaneously
+    // producing the next instruction.
     //
-    // 1. Convert the raw 32-bit instruction into its fields.
-    // 2. Determine what operation the instruction represents.
-    // 3. Read the required values from the register file.
+    // Therefore:
     //
-    // The results are then stored in ID/EX.
+    //     CURRENT IF/ID → ID → NEXT ID/EX
     // --------------------------------------------------------
 
     // If IF/ID does not contain a valid instruction,
     // there is nothing to decode.
     if (!if_id.valid) {
 
-        id_ex.valid = false;
+        next_id_ex.valid = false;
 
         return;
     }
 
+
     // --------------------------------------------------------
-    // Step 1: Decode the raw instruction fields
+    // Step 1: Decode the raw instruction
     // --------------------------------------------------------
 
-    // Create an Instruction object.
-    //
-    // Its constructor automatically extracts:
-    // opcode, rs, rt, rd, immediate, etc.
     Instruction instruction(if_id.instruction);
 
-    // Now determine the actual operation:
-    //
-    // ADD, SUB, ADDI, LW, SW, BEQ, etc.
     DecodedInstruction decoded =
         decodeInstruction(instruction);
+
 
     // --------------------------------------------------------
     // Step 2: Read the register file
@@ -222,49 +197,38 @@ void CPU::decodeStage() {
     uint32_t readData2 =
         readRegister(decoded.rt);
 
+
     // --------------------------------------------------------
-    // Step 3: Sign-extend the 16-bit immediate
-    // --------------------------------------------------------
-    //
-    // Example:
-    //
-    // immediate = 10
-    //       ↓
-    // 00000000 00000000 00000000 00001010
-    //
-    // immediate = -5
-    //       ↓
-    // 11111111 11111111 11111111 11111011
-    //
-    // This gives the EX stage a proper 32-bit value.
+    // Step 3: Sign-extend the immediate
     // --------------------------------------------------------
 
     int32_t immediate =
         static_cast<int32_t>(decoded.immediate);
 
+
     // --------------------------------------------------------
-    // Step 4: Put everything into ID/EX
+    // Step 4: Write everything into NEXT ID/EX
     // --------------------------------------------------------
 
-    id_ex.valid = true;
+    next_id_ex.valid = true;
 
-    // Keep the PC associated with this instruction.
-    id_ex.pc = if_id.pc;
+    // PC belonging to this instruction.
+    next_id_ex.pc = if_id.pc;
 
-    // Values read from registers.
-    id_ex.readData1 = readData1;
-    id_ex.readData2 = readData2;
+    // Values read from the register file.
+    next_id_ex.readData1 = readData1;
+    next_id_ex.readData2 = readData2;
 
     // Sign-extended immediate.
-    id_ex.immediate = immediate;
+    next_id_ex.immediate = immediate;
 
     // Register numbers.
-    id_ex.rs = decoded.rs;
-    id_ex.rt = decoded.rt;
-    id_ex.rd = decoded.rd;
+    next_id_ex.rs = decoded.rs;
+    next_id_ex.rt = decoded.rt;
+    next_id_ex.rd = decoded.rd;
 
-    // Operation determined by the decoder.
-    id_ex.operation = decoded.operation;
+    // Decoded operation.
+    next_id_ex.operation = decoded.operation;
 }
 
 void CPU::executeStage() {
@@ -273,138 +237,209 @@ void CPU::executeStage() {
     // Execute (EX) stage
     // --------------------------------------------------------
     //
-    // The ID stage has placed all required information into
-    // ID/EX.
+    // CURRENT:
     //
-    // EX is responsible for:
+    //     ID/EX → EX
     //
-    //   1. Selecting the correct ALU operands
-    //   2. Performing the ALU operation
-    //   3. Passing the result to EX/MEM
+    // NEXT:
     //
-    // For R-type:
+    //     EX → next EX/MEM
     //
-    //     ADD $t0, $t1, $t2
-    //     ALU = $t1 + $t2
-    //
-    // For immediate instructions:
-    //
-    //     ADDI $t0, $t1, 5
-    //     ALU = $t1 + 5
-    //
-    // LW/SW work similarly:
-    //
-    //     address = base register + offset
+    // EX calculates the ALU result and determines which
+    // register will eventually receive the result.
     // --------------------------------------------------------
 
-    // Nothing to execute if ID/EX is empty.
+    // If there is no valid instruction in ID/EX,
+    // EX has nothing to execute.
     if (!id_ex.valid) {
 
-        ex_mem.valid = false;
+        next_ex_mem.valid = false;
 
         return;
     }
 
 
-    // --------------------------------------------------------
-    // Operand 1
-    // --------------------------------------------------------
-    //
-    // For all instructions currently supported,
-    // the first ALU operand comes from rs.
-    // --------------------------------------------------------
+   // --------------------------------------------------------
+// Forwarding for operand 1
+// --------------------------------------------------------
+//
+// Normally, operand1 comes from the value captured during ID.
+//
+// But if a previous instruction has just produced a result
+// for the same register, that result may not have reached
+// the register file yet.
+//
+// In that case, forward the newer value directly.
+// --------------------------------------------------------
 
-    uint32_t operand1 =
-        id_ex.readData1;
+uint32_t operand1 =
+    id_ex.readData1;
 
 
-    // --------------------------------------------------------
-    // Operand 2
-    // --------------------------------------------------------
-    //
-    // R-type instructions use the value from rt.
-    //
-    // Immediate instructions use the sign-extended
-    // immediate instead.
-    // --------------------------------------------------------
+// Check EX/MEM first because it contains the most recently
+// produced ALU result.
+if (ex_mem.valid &&
+    ex_mem.destination != 0 &&
+    ex_mem.destination == id_ex.rs &&
+    ex_mem.operation != Operation::SW &&
+    ex_mem.operation != Operation::LW) {
 
-    uint32_t operand2;
+    operand1 =
+        ex_mem.aluResult;
+}
 
-    if (id_ex.operation == Operation::ADDI ||
-        id_ex.operation == Operation::LW ||
-        id_ex.operation == Operation::SW) {
 
-        // Immediate-based instruction
+// If EX/MEM didn't provide the value, check MEM/WB.
+else if (mem_wb.valid &&
+         mem_wb.destination != 0 &&
+         mem_wb.destination == id_ex.rs) {
+
+    // LW gets its value from memory.
+    if (mem_wb.operation == Operation::LW) {
+
+        operand1 =
+            mem_wb.memoryData;
+    }
+
+    // Arithmetic instructions get their value from ALU.
+    else {
+
+        operand1 =
+            mem_wb.aluResult;
+    }
+}
+
+
+   uint32_t operand2;
+
+
+// --------------------------------------------------------
+// Immediate instructions
+// --------------------------------------------------------
+//
+// ADDI, LW and SW use the immediate as their second ALU
+// operand, so there is no register value to forward here.
+// --------------------------------------------------------
+
+if (id_ex.operation == Operation::ADDI ||
+    id_ex.operation == Operation::LW ||
+    id_ex.operation == Operation::SW) {
+
+    operand2 =
+        static_cast<uint32_t>(id_ex.immediate);
+}
+
+
+// --------------------------------------------------------
+// R-type instructions
+// --------------------------------------------------------
+//
+// The second operand normally comes from rt.
+//
+// However, it may need forwarding just like operand1.
+// --------------------------------------------------------
+
+else {
+
+    operand2 =
+        id_ex.readData2;
+
+
+    // Check the most recent ALU result first.
+    if (ex_mem.valid &&
+        ex_mem.destination != 0 &&
+        ex_mem.destination == id_ex.rt &&
+        ex_mem.operation != Operation::SW &&
+        ex_mem.operation != Operation::LW) {
+
         operand2 =
-            static_cast<uint32_t>(id_ex.immediate);
-
-    } else {
-
-        // R-type instruction
-        operand2 =
-            id_ex.readData2;
+            ex_mem.aluResult;
     }
 
 
-  // --------------------------------------------------------
-// Select the actual ALU operation.
-//
-// LW and SW are not themselves ALU operations.
-// Their EX-stage job is to calculate:
-//
-//     base address + offset
-//
-// Therefore, the ALU performs ADD for both LW and SW.
-// --------------------------------------------------------
+    // Otherwise check MEM/WB.
+    else if (mem_wb.valid &&
+             mem_wb.destination != 0 &&
+             mem_wb.destination == id_ex.rt) {
 
-Operation aluOperation = id_ex.operation;
+        if (mem_wb.operation == Operation::LW) {
 
-if (id_ex.operation == Operation::LW ||
-    id_ex.operation == Operation::SW) {
+            operand2 =
+                mem_wb.memoryData;
+        }
 
-    aluOperation = Operation::ADD;
+        else {
+
+            operand2 =
+                mem_wb.aluResult;
+        }
+    }
 }
 
-uint32_t result =
-    ALU::execute(
-        aluOperation,
-        operand1,
-        operand2
-    );
-
     // --------------------------------------------------------
-    // Store the result in EX/MEM
+    // Determine the actual ALU operation.
+    // --------------------------------------------------------
+    //
+    // LW and SW need the ALU to calculate:
+    //
+    //     base address + offset
+    //
+    // Therefore, the ALU performs ADD for them.
     // --------------------------------------------------------
 
-    ex_mem.valid = true;
+    Operation aluOperation =
+        id_ex.operation;
 
-    // ALU result is either:
-    //
-    //   arithmetic result
-    //          OR
-    //
-    //   effective memory address
-    //
-    ex_mem.aluResult = result;
+    if (id_ex.operation == Operation::LW ||
+        id_ex.operation == Operation::SW) {
+
+        aluOperation = Operation::ADD;
+    }
 
 
     // --------------------------------------------------------
-    // Store data for SW
+    // Perform ALU operation
+    // --------------------------------------------------------
+
+    uint32_t result =
+        ALU::execute(
+            aluOperation,
+            operand1,
+            operand2
+        );
+
+
+    // --------------------------------------------------------
+    // Write results into NEXT EX/MEM
+    // --------------------------------------------------------
+
+    next_ex_mem.valid = true;
+
+    // ALU result.
+    //
+    // For arithmetic:
+    //     actual arithmetic result
+    //
+    // For LW/SW:
+    //     calculated memory address
+    next_ex_mem.aluResult =
+        result;
+
+
+    // --------------------------------------------------------
+    // Store data
     // --------------------------------------------------------
     //
-    // IMPORTANT:
+    // Needed by SW.
     //
-    // For SW:
+    // Example:
     //
     //     sw $t0, 4($t1)
     //
     // readData2 contains the value of $t0.
-    //
-    // We need to carry this value through EX/MEM
-    // because MEM will perform the actual store.
     // --------------------------------------------------------
 
-    ex_mem.storeData =
+    next_ex_mem.storeData =
         id_ex.readData2;
 
 
@@ -412,32 +447,33 @@ uint32_t result =
     // Destination register
     // --------------------------------------------------------
     //
-    // For R-type:
+    // R-type:
     //
     //     destination = rd
     //
-    // For ADDI/LW:
+    // ADDI/LW:
     //
     //     destination = rt
     //
-    // SW has no destination register.
+    // SW doesn't actually write a register, but keeping a
+    // value here is harmless because WB will ignore SW.
     // --------------------------------------------------------
 
     if (id_ex.operation == Operation::ADDI ||
         id_ex.operation == Operation::LW) {
 
-        ex_mem.destination =
+        next_ex_mem.destination =
             id_ex.rt;
 
     } else {
 
-        ex_mem.destination =
+        next_ex_mem.destination =
             id_ex.rd;
     }
 
 
-    // Pass the operation to the MEM stage.
-    ex_mem.operation =
+    // Pass the instruction type to the next stage.
+    next_ex_mem.operation =
         id_ex.operation;
 }
 
@@ -447,70 +483,75 @@ void CPU::memoryStage() {
     // Memory Access (MEM) stage
     // --------------------------------------------------------
     //
-    // The EX stage has already calculated the ALU result.
+    // CURRENT:
     //
-    // For normal arithmetic instructions:
+    //     EX/MEM → MEM
     //
-    //     ADD, SUB, AND, OR, SLT
+    // NEXT:
     //
-    // the ALU result simply passes through this stage.
+    //     MEM → next MEM/WB
     //
-    // For memory instructions:
+    // Arithmetic instructions simply pass their ALU result
+    // through this stage.
     //
-    //     LW -> read from memory
-    //     SW -> write to memory
+    // LW reads memory.
     //
+    // SW writes memory.
     // --------------------------------------------------------
 
-    // If EX/MEM doesn't contain a valid instruction,
-    // there is nothing to process.
+    // If EX/MEM is empty, there is nothing to process.
     if (!ex_mem.valid) {
 
-        mem_wb.valid = false;
+        next_mem_wb.valid = false;
 
         return;
     }
 
-    // --------------------------------------------------------
-    // Default: pass the ALU result forward.
-    // --------------------------------------------------------
-
-    mem_wb.valid = true;
-
-    mem_wb.aluResult = ex_mem.aluResult;
-
-    mem_wb.destination = ex_mem.destination;
-
-    mem_wb.operation = ex_mem.operation;
-
 
     // --------------------------------------------------------
-    // LW: Load Word
+    // Default values
+    // --------------------------------------------------------
+
+    next_mem_wb.valid = true;
+
+    // Pass the ALU result forward.
+    next_mem_wb.aluResult =
+        ex_mem.aluResult;
+
+    // Pass the destination register forward.
+    next_mem_wb.destination =
+        ex_mem.destination;
+
+    // Pass the operation forward.
+    next_mem_wb.operation =
+        ex_mem.operation;
+
+
+    // --------------------------------------------------------
+    // LW — Load Word
     // --------------------------------------------------------
     //
-    // EX calculated:
+    // EX calculated the effective address:
     //
-    //     effective address = base + offset
+    //     base + offset
     //
-    // That address is stored in aluResult.
-    //
-    // Now MEM reads the actual data.
+    // Now MEM reads the value from that address.
     // --------------------------------------------------------
 
     if (ex_mem.operation == Operation::LW) {
 
-        mem_wb.memoryData =
+        next_mem_wb.memoryData =
             readMemoryWord(ex_mem.aluResult);
     }
 
 
     // --------------------------------------------------------
-    // SW: Store Word
+    // SW — Store Word
     // --------------------------------------------------------
     //
-    // EX calculated the memory address.
+    // EX calculated the effective address.
     //
-    // MEM now writes storeData into that address.
+    // MEM performs the actual memory write.
     // --------------------------------------------------------
 
     else if (ex_mem.operation == Operation::SW) {
@@ -528,24 +569,19 @@ void CPU::writeBackStage() {
     // Write Back (WB) stage
     // --------------------------------------------------------
     //
-    // The MEM stage has placed the final result into MEM/WB.
+    // WB reads the CURRENT MEM/WB register.
     //
-    // Now we decide what value should be written back into
-    // the destination register.
+    // Unlike the other stages, WB does not produce another
+    // pipeline register.
     //
-    // Arithmetic instructions:
-    //
-    //     ADD, SUB, AND, OR, SLT, ADDI
-    //
-    // use the ALU result.
-    //
-    // LW uses the value read from memory.
+    // It writes the final result into the register file.
     // --------------------------------------------------------
 
     // Nothing to write back if MEM/WB is empty.
     if (!mem_wb.valid) {
         return;
     }
+
 
     // --------------------------------------------------------
     // LW
@@ -555,8 +591,11 @@ void CPU::writeBackStage() {
     //
     //     lw $t0, 4($t1)
     //
-    // the value that needs to go into $t0 is the
-    // memoryData field.
+    // MEM has already read the value from memory.
+    //
+    // That value is now in:
+    //
+    //     mem_wb.memoryData
     // --------------------------------------------------------
 
     if (mem_wb.operation == Operation::LW) {
@@ -566,6 +605,7 @@ void CPU::writeBackStage() {
             mem_wb.memoryData
         );
     }
+
 
     // --------------------------------------------------------
     // Arithmetic / immediate instructions
@@ -587,13 +627,14 @@ void CPU::writeBackStage() {
         );
     }
 
+
     // --------------------------------------------------------
     // SW
     // --------------------------------------------------------
     //
-    // SW does not write anything to a register.
+    // SW already completed its work in MEM.
     //
-    // Its work was already completed during MEM.
+    // It does not write anything to the register file.
     // --------------------------------------------------------
 
     else if (mem_wb.operation == Operation::SW) {
@@ -824,4 +865,75 @@ void CPU::execute(const DecodedInstruction& instruction) {
 
             break;
     }
+
+    
+}
+
+void CPU::step() {
+
+    // --------------------------------------------------------
+    // One complete processor clock cycle
+    // --------------------------------------------------------
+    //
+    // Each stage reads the CURRENT pipeline registers and
+    // writes its result into the NEXT pipeline registers.
+    //
+    // Therefore, we must NOT immediately overwrite the
+    // current pipeline registers.
+    //
+    // First:
+    //
+    //     CURRENT → stages → NEXT
+    //
+    // Then, at the simulated clock edge:
+    //
+    //     NEXT → CURRENT
+    // --------------------------------------------------------
+
+    // Advance the clock.
+    cycle++;
+
+
+    // ========================================================
+    // Phase 1: Execute all five pipeline stages
+    // ========================================================
+    //
+    // We call them from WB → IF.
+    //
+    // Each stage reads CURRENT state, while writing NEXT state.
+    // ========================================================
+
+    // Stage 5
+    writeBackStage();
+
+    // Stage 4
+    memoryStage();
+
+    // Stage 3
+    executeStage();
+
+    // Stage 2
+    decodeStage();
+
+    // Stage 1
+    fetchStage();
+
+
+    // ========================================================
+    // Phase 2: Simulated clock edge
+    // ========================================================
+    //
+    // All pipeline registers update simultaneously.
+    //
+    // This is analogous to flip-flops capturing their inputs
+    // on a real processor clock edge.
+    // ========================================================
+
+    if_id = next_if_id;
+
+    id_ex = next_id_ex;
+
+    ex_mem = next_ex_mem;
+
+    mem_wb = next_mem_wb;
 }

@@ -13,7 +13,8 @@ public:
 
     // MIPS has 32 general-purpose registers, each 32 bits wide
     uint32_t registers[32];
-
+    // Number of clock cycles executed so far
+    uint64_t cycle;
     // Instruction memory: each instruction is 32 bits
     std::vector<uint32_t> instructionMemory;
 
@@ -29,6 +30,27 @@ ID_EX id_ex;
 EX_MEM ex_mem;
 // Pipeline register between MEM and WB stages
 MEM_WB mem_wb;
+
+// --------------------------------------------------------
+// Next-state pipeline registers
+// --------------------------------------------------------
+//
+// During a clock cycle:
+//
+//   current registers → stages → next registers
+//
+// At the end of the cycle:
+//
+//   next registers → current registers
+//
+// This prevents one instruction from accidentally
+// travelling through multiple stages during one cycle.
+// --------------------------------------------------------
+
+IF_ID next_if_id;
+ID_EX next_id_ex;
+EX_MEM next_ex_mem;
+MEM_WB next_mem_wb;
     CPU();
 
     // Reset the processor to its initial state
@@ -54,6 +76,8 @@ MEM_WB mem_wb;
     void executeStage();
     void memoryStage();
     void writeBackStage();
+    void step(); // advance processor by one clock cycle
+    
 };
 
 #endif
