@@ -872,61 +872,94 @@ void CPU::execute(const DecodedInstruction& instruction) {
 void CPU::step() {
 
     // --------------------------------------------------------
-    // One complete processor clock cycle
-    // --------------------------------------------------------
-    //
-    // Each stage reads the CURRENT pipeline registers and
-    // writes its result into the NEXT pipeline registers.
-    //
-    // Therefore, we must NOT immediately overwrite the
-    // current pipeline registers.
-    //
-    // First:
-    //
-    //     CURRENT → stages → NEXT
-    //
-    // Then, at the simulated clock edge:
-    //
-    //     NEXT → CURRENT
+    // One processor clock cycle
     // --------------------------------------------------------
 
-    // Advance the clock.
     cycle++;
 
-
-    // ========================================================
-    // Phase 1: Execute all five pipeline stages
-    // ========================================================
+    // --------------------------------------------------------
+    // First, execute stages that are already further down
+    // the pipeline.
     //
-    // We call them from WB → IF.
-    //
-    // Each stage reads CURRENT state, while writing NEXT state.
-    // ========================================================
+    // These stages read the CURRENT pipeline registers and
+    // write to NEXT pipeline registers.
+    // --------------------------------------------------------
 
-    // Stage 5
     writeBackStage();
 
-    // Stage 4
     memoryStage();
 
-    // Stage 3
     executeStage();
 
-    // Stage 2
-    decodeStage();
 
-    // Stage 1
-    fetchStage();
+    // --------------------------------------------------------
+    // Check whether the instruction currently in IF/ID depends
+    // on a value being loaded by the instruction currently in
+    // ID/EX.
+    // --------------------------------------------------------
+
+    bool loadUseHazard =
+        hasLoadUseHazard();
+
+
+    if (loadUseHazard) {
+
+        // ====================================================
+        // STALL
+        // ====================================================
+        //
+        // The instruction in ID cannot move into EX yet.
+        //
+        // Therefore:
+        //
+        //     ID/EX gets a bubble.
+        //
+        // However, the LW already in ID/EX must continue
+        // through EX → MEM → WB.
+        //
+        // We already called executeStage() above, so its
+        // result has safely gone into next_EX_MEM.
+        // ====================================================
+
+        next_id_ex.valid = false;
+        next_if_id = if_id;
+
+
+        // ----------------------------------------------------
+        // STALL IF
+        // ----------------------------------------------------
+        //
+        // Do NOT call fetchStage().
+        //
+        // Therefore:
+        //
+        //     PC stays unchanged
+        //     IF/ID stays unchanged
+        //
+        // The dependent instruction remains in IF/ID.
+        // ----------------------------------------------------
+
+    }
+
+    else {
+
+        // ----------------------------------------------------
+        // No hazard.
+        //
+        // Normal ID and IF operation.
+        // ----------------------------------------------------
+
+        decodeStage();
+
+        fetchStage();
+    }
 
 
     // ========================================================
-    // Phase 2: Simulated clock edge
+    // Simulated clock edge
     // ========================================================
     //
     // All pipeline registers update simultaneously.
-    //
-    // This is analogous to flip-flops capturing their inputs
-    // on a real processor clock edge.
     // ========================================================
 
     if_id = next_if_id;
@@ -936,4 +969,133 @@ void CPU::step() {
     ex_mem = next_ex_mem;
 
     mem_wb = next_mem_wb;
+}
+
+bool CPU::hasLoadUseHazard() const {
+
+    // --------------------------------------------------------
+    // Load-use hazard
+    // --------------------------------------------------------
+    //
+    // Example:
+    //
+    //     LW  $t0, 0($t1)
+    //     ADD $t2, $t0, $t3
+    //
+    // The LW is currently in ID/EX.
+    //
+    // The ADD is currently in IF/ID.
+    //
+    // ADD needs $t0, but LW has not produced the loaded
+    // value yet.
+    // --------------------------------------------------------
+
+    // If there is no instruction in ID/EX,
+    // there cannot be a load-use hazard.
+    if (!id_ex.valid) {
+        return false;
+    }
+
+    // Only LW creates the specific load-use hazard we're
+    // detecting here.
+    if (id_ex.operation != Operation::LW) {
+        return false;
+    }
+
+
+    // --------------------------------------------------------
+    // Decode the instruction currently waiting in IF/ID.
+    // --------------------------------------------------------
+
+    if (!if_id.valid) {
+        return false;
+    }
+
+    Instruction instruction(if_id.instruction);
+
+    DecodedInstruction decoded =
+        decodeInstruction(instruction);
+
+
+    // The register that LW will eventually write.
+    uint8_t loadDestination =
+        id_ex.rt;
+
+
+    // --------------------------------------------------------
+    // Does the instruction in ID need that register?
+    // --------------------------------------------------------
+    //
+    // For our currently supported instructions:
+    //
+    // ADD/SUB/AND/OR/SLT:
+    //     use rs and rt
+    //
+    // ADDI:
+    //     uses rs
+    //
+    // LW:
+    //     uses rs
+    //
+    // SW:
+    //     uses rs and rt
+    // --------------------------------------------------------
+
+    bool usesRs =
+        true;
+
+    bool usesRt =
+        false;
+
+    switch (decoded.operation) {
+
+        case Operation::ADD:
+        case Operation::SUB:
+        case Operation::AND:
+        case Operation::OR:
+        case Operation::SLT:
+
+            usesRs = true;
+            usesRt = true;
+            break;
+
+        case Operation::SW:
+
+            usesRs = true;
+            usesRt = true;
+            break;
+
+        case Operation::ADDI:
+        case Operation::LW:
+
+            usesRs = true;
+            usesRt = false;
+            break;
+
+        default:
+
+            usesRs = false;
+            usesRt = false;
+            break;
+    }
+
+
+    // --------------------------------------------------------
+    // Check for the actual dependency.
+    // --------------------------------------------------------
+
+    if (usesRs &&
+        decoded.rs == loadDestination) {
+
+        return true;
+    }
+
+    if (usesRt &&
+        decoded.rt == loadDestination) {
+
+        return true;
+    }
+
+
+    return false;
 }

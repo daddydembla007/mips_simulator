@@ -77,6 +77,8 @@ MEM_WB next_mem_wb;
     void memoryStage();
     void writeBackStage();
     void step(); // advance processor by one clock cycle
+    // Detect a load-use data hazard between ID and EX
+    bool hasLoadUseHazard() const;
     
 };
 
